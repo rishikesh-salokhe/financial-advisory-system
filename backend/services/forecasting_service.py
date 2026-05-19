@@ -32,6 +32,8 @@ from backend.schemas.forecasting import (
 )
 from ml_engine.forecasting.arima_model import ARIMAForecaster
 from ml_engine.forecasting.base import Forecaster
+# LSTMForecaster is imported lazily inside _load_artifact() to keep TensorFlow's
+# multi-second import cost off the FastAPI startup path.
 
 
 MODEL_DIR: Path = PROJECT_ROOT / "models" / "forecasting"
@@ -115,8 +117,13 @@ class ForecastingService:
     def _load_artifact(path: Path, model_type: str) -> Forecaster:
         if model_type == "arima":
             return ARIMAForecaster.load(path)
+        if model_type == "lstm":
+            # Lazy import — TensorFlow takes seconds to import, no reason to pay
+            # that cost on every backend startup if no one requests an LSTM forecast.
+            from ml_engine.forecasting.lstm_model import LSTMForecaster
+            return LSTMForecaster.load(path)
         raise ModelNotReadyError(
-            f"Model type '{model_type}' loading not implemented yet",
+            f"Unknown model type '{model_type}'",
             details={"model_type": model_type},
         )
 
