@@ -43,12 +43,14 @@ ENV/
 data/raw/*
 data/processed/*
 data/vectorstore/*
+data/cache/*
 !data/**/.gitkeep
 models/**/*
 !models/**/.gitkeep
 *.pkl
 *.h5
 *.joblib
+*.parquet
 
 # Logs
 logs/
