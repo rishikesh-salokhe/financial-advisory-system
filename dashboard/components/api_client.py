@@ -68,6 +68,9 @@ class APIClient:
     def risk_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/risk/profile", json=payload)
 
+    def asset_risk(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/risk/asset", json=payload)
+
     def portfolio_optimize(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/risk/optimize", json=payload)
 
