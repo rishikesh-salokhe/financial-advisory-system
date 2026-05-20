@@ -76,11 +76,17 @@ class FinBERTAnalyzer:
             return
         from transformers import pipeline
 
+        # Force PyTorch backend. TensorFlow 2.17 ships with Keras 3, which
+        # transformers' TF integration doesn't yet support — so without this
+        # we'd hit "Your currently installed version of Keras is Keras 3"
+        # at pipeline-load time. torch is already a project dependency.
         self._pipeline = pipeline(
             "sentiment-analysis",
             model=self.MODEL_NAME,
             tokenizer=self.MODEL_NAME,
+            framework="pt",
             truncation=True,
+            device=-1,  # CPU; set to 0 for first GPU if available
         )
 
     def score(self, text: str) -> SentimentScore:
