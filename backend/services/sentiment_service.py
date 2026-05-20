@@ -45,13 +45,17 @@ class SentimentService:
 
     async def analyze(self, req: SentimentRequest) -> SentimentSummary:
         ticker = req.ticker.upper()
-        logger.info(f"Sentiment {ticker} max_articles={req.max_articles}")
+        days_back = self._compute_days_back(req)
+        logger.info(
+            f"Sentiment {ticker} max_articles={req.max_articles} days_back={days_back}"
+        )
 
         # 1. Fetch headlines (network I/O, run on a thread so we don't block).
         articles = await asyncio.to_thread(
             fetch_news,
             ticker=ticker,
             max_articles=req.max_articles,
+            days_back=days_back,
         )
 
         # 2. Filter by date range if requested.
@@ -106,6 +110,21 @@ class SentimentService:
         return self._analyzer.score_batch(headlines)
 
     # ─── Helpers ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _compute_days_back(req: SentimentRequest) -> int:
+        """Derive a sensible ``days_back`` for the fetcher from the request.
+
+        If the caller specified ``start_date`` we honor it; otherwise default
+        to 30 days, which gives FinBERT enough headlines to produce a meaningful
+        aggregate without overwhelming the free-tier quotas.
+        """
+        from datetime import date as _date
+
+        if req.start_date is not None:
+            delta = (_date.today() - req.start_date).days
+            return max(1, min(delta, 365))  # clamp to [1, 365]
+        return 30
 
     @staticmethod
     def _filter_by_date(articles: list[dict], start, end) -> list[dict]:
