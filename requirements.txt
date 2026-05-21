@@ -40,6 +40,7 @@ faiss-cpu==1.8.0.post1
 tiktoken==0.8.0
 openai==1.51.0
 sentence-transformers==3.1.1  # local-embedding fallback
+pypdf==5.0.1                  # PDF loader backend for langchain
 
 # ─── Portfolio optimization ───────────────────────────────────────────────
 PyPortfolioOpt==1.5.5
