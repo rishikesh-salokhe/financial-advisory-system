@@ -19,12 +19,15 @@ import pandas as pd
 from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from backend.core.exceptions import ExternalServiceError, ModelNotReadyError
+from backend.core.exceptions import ExternalServiceError, ModelNotReadyError, ValidationError
 from backend.schemas.risk import (
     AssetRiskMetrics,
     AssetRiskRequest,
     AssetRiskResponse,
+    BaselineDTO,
+    DiscreteAllocationDTO,
     DrawdownPoint,
+    FrontierPointDTO,
     PortfolioAllocation,
     PortfolioOptimizationRequest,
     ReturnHistogramBin,
@@ -33,6 +36,7 @@ from backend.schemas.risk import (
     RollingVolPoint,
 )
 from ml_engine.data.yahoo_finance import fetch_close_series
+from ml_engine.portfolio import optimizer as PO
 from ml_engine.risk import metrics as M
 from ml_engine.risk.profiler import ProfileInputs, compute_score
 
@@ -174,14 +178,139 @@ class RiskService:
             return_histogram=histogram,
         )
 
-    # ─── Portfolio optimization (Phase 5 placeholder) ────────────────────
+    # ─── Portfolio optimization ───────────────────────────────────────────
 
     async def optimize_portfolio(
         self, req: PortfolioOptimizationRequest
     ) -> PortfolioAllocation:
-        """Stub. Will be wired in Phase 5 via PyPortfolioOpt."""
-        logger.info(f"Portfolio optimization requested for {req.tickers}")
-        raise ModelNotReadyError(
-            "Portfolio optimizer not yet implemented (Phase 5).",
-            details={"tickers": req.tickers, "objective": req.objective},
+        """Mean-variance optimization via PyPortfolioOpt (Ledoit-Wolf covariance).
+
+        CPU-bound (cvxpy solves several QPs for the frontier sweep), so we
+        dispatch to a worker thread to keep the event loop responsive.
+        """
+        tickers = [t.upper() for t in req.tickers]
+        logger.info(
+            f"Portfolio optimization: {tickers} objective={req.objective} "
+            f"lookback={req.lookback_days}d budget=${req.budget:,.0f}"
+        )
+
+        if req.objective == "efficient_return" and req.target_return is None:
+            raise ValidationError(
+                "target_return is required when objective='efficient_return'.",
+                details={"objective": req.objective},
+            )
+
+        return await asyncio.to_thread(
+            self._optimize_portfolio_sync,
+            tickers=tickers,
+            lookback_days=req.lookback_days,
+            objective=req.objective,
+            target_return=req.target_return,
+            risk_free_rate=req.risk_free_rate,
+            budget=req.budget,
+            include_frontier=req.include_frontier,
+            frontier_points=req.frontier_points,
+        )
+
+    def _optimize_portfolio_sync(
+        self,
+        tickers: list[str],
+        lookback_days: int,
+        objective: str,
+        target_return: float | None,
+        risk_free_rate: float,
+        budget: float,
+        include_frontier: bool,
+        frontier_points: int,
+    ) -> PortfolioAllocation:
+        # 1. Fetch + align price panel ----------------------------------
+        try:
+            prices = PO.fetch_price_panel(tickers, lookback_days=lookback_days)
+        except ValueError as exc:
+            # Domain-level failure (e.g. < 2 tickers usable, no overlap)
+            raise ModelNotReadyError(
+                str(exc),
+                details={"tickers": tickers, "lookback_days": lookback_days},
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise ExternalServiceError(
+                f"Failed to fetch price data: {exc}",
+                details={"tickers": tickers},
+            ) from exc
+
+        tickers_used = [str(c) for c in prices.columns]
+        tickers_failed = [t for t in tickers if t not in tickers_used]
+
+        # 2. Solve the requested objective ------------------------------
+        try:
+            opt = PO.optimize(
+                prices,
+                objective=objective,  # type: ignore[arg-type]
+                target_return=target_return,
+                risk_free_rate=risk_free_rate,
+            )
+        except ValueError as exc:
+            # Most commonly: target_return outside the achievable range
+            raise ValidationError(
+                f"Optimization infeasible: {exc}",
+                details={
+                    "objective": objective,
+                    "target_return": target_return,
+                    "hint": "Try a target return between min-vol return and max single-asset return.",
+                },
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise ModelNotReadyError(
+                f"Solver failed: {exc}",
+                details={"objective": objective},
+            ) from exc
+
+        # 3. Discrete share allocation ----------------------------------
+        disc = PO.discrete_allocate(opt.weights, prices, budget=budget)
+
+        # 4. Equal-weight baseline (cheap; always compute) --------------
+        baseline = PO.equal_weight_baseline(prices, risk_free_rate=risk_free_rate)
+
+        # 5. Efficient frontier sweep (optional) ------------------------
+        frontier: list[FrontierPointDTO] = []
+        if include_frontier:
+            for pt in PO.compute_frontier(
+                prices,
+                n_points=frontier_points,
+                risk_free_rate=risk_free_rate,
+            ):
+                frontier.append(FrontierPointDTO(
+                    volatility=pt.volatility,
+                    expected_return=pt.expected_return,
+                    sharpe_ratio=pt.sharpe_ratio,
+                ))
+
+        # 6. Assemble response ------------------------------------------
+        start_d, end_d = PO.panel_date_range(prices)
+        return PortfolioAllocation(
+            weights=opt.weights,
+            expected_return=opt.expected_return,
+            volatility=opt.volatility,
+            sharpe_ratio=opt.sharpe_ratio,
+            discrete_allocation=DiscreteAllocationDTO(
+                shares=disc.shares,
+                leftover_cash=disc.leftover_cash,
+                total_invested=disc.total_invested,
+                latest_prices=disc.latest_prices,
+            ),
+            efficient_frontier=frontier,
+            baseline=BaselineDTO(
+                weights=baseline.weights,
+                expected_return=baseline.expected_return,
+                volatility=baseline.volatility,
+                sharpe_ratio=baseline.sharpe_ratio,
+            ),
+            objective=objective,
+            tickers_used=tickers_used,
+            tickers_failed=tickers_failed,
+            n_observations=len(prices),
+            lookback_days=lookback_days,
+            risk_free_rate=risk_free_rate,
+            start_date=start_d,
+            end_date=end_d,
         )

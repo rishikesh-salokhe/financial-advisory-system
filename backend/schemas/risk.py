@@ -42,13 +42,75 @@ class PortfolioOptimizationRequest(BaseModel):
         description="Annualized target return; required when objective='efficient_return'",
     )
     risk_free_rate: float = 0.02
+    budget: float = Field(
+        10_000.0,
+        gt=0,
+        description="Dollar amount available to invest; drives whole-share discrete allocation.",
+    )
+    include_frontier: bool = Field(
+        True,
+        description="Compute the efficient frontier sweep for plotting (adds ~1–2s).",
+    )
+    frontier_points: int = Field(
+        40,
+        ge=10,
+        le=200,
+        description="How many points to sample along the efficient frontier.",
+    )
 
 
-class PortfolioAllocation(BaseModel):
+class FrontierPointDTO(BaseModel):
+    volatility: float
+    expected_return: float
+    sharpe_ratio: float
+
+
+class DiscreteAllocationDTO(BaseModel):
+    """Whole-share allocation: number of shares of each asset to buy."""
+
+    shares: dict[str, int]
+    leftover_cash: float
+    total_invested: float
+    latest_prices: dict[str, float]
+
+
+class BaselineDTO(BaseModel):
+    """Equal-weight reference portfolio for comparison."""
+
     weights: dict[str, float]
     expected_return: float
     volatility: float
     sharpe_ratio: float
+
+
+class PortfolioAllocation(BaseModel):
+    """Optimization result. Includes the optimal allocation, frontier, and a
+    1/N baseline for context."""
+
+    # Optimal portfolio
+    weights: dict[str, float]
+    expected_return: float
+    volatility: float
+    sharpe_ratio: float
+
+    # Discrete share allocation given the requested budget
+    discrete_allocation: DiscreteAllocationDTO
+
+    # Efficient frontier sweep (empty list when include_frontier=False)
+    efficient_frontier: list[FrontierPointDTO] = Field(default_factory=list)
+
+    # Equal-weight baseline for sanity check
+    baseline: BaselineDTO
+
+    # Panel metadata
+    objective: str
+    tickers_used: list[str]
+    tickers_failed: list[str] = Field(default_factory=list)
+    n_observations: int
+    lookback_days: int
+    risk_free_rate: float
+    start_date: date
+    end_date: date
 
 
 # ─── Asset-level risk analytics ───────────────────────────────────────────
