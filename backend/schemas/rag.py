@@ -8,6 +8,14 @@ class RAGQueryRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=2000)
     top_k: int | None = Field(None, ge=1, le=20, description="Override default retrieval depth")
     session_id: str | None = Field(None, description="Conversation id for multi-turn context")
+    use_mmr: bool = Field(
+        False,
+        description=(
+            "Use Maximum Marginal Relevance retrieval, which diversifies the "
+            "retrieved chunks. Recommended for comparison questions that span "
+            "multiple source documents."
+        ),
+    )
 
 
 class RetrievedChunk(BaseModel):
