@@ -82,10 +82,15 @@ class RAGChain:
     def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
         question: str = payload["question"]
         top_k: int | None = payload.get("top_k")
+        # ``use_mmr=True`` switches retrieval to Maximum Marginal Relevance,
+        # which actively penalizes redundancy across retrieved chunks. Useful
+        # for comparison questions ("compare AAPL and MSFT…") that otherwise
+        # tend to get K chunks all from the same document.
+        search_type = "mmr" if payload.get("use_mmr") else "similarity"
 
-        retriever = build_retriever(self._store, top_k=top_k)
+        retriever = build_retriever(self._store, top_k=top_k, search_type=search_type)
         docs: list[Document] = retriever.invoke(question)
-        logger.debug(f"Retrieved {len(docs)} chunk(s) for question")
+        logger.debug(f"Retrieved {len(docs)} chunk(s) for question (search={search_type})")
 
         context = _format_docs(docs)
         formatted = self._prompt.format_messages(question=question, context=context)

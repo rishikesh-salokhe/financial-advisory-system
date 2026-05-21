@@ -38,7 +38,11 @@ class RAGService:
         logger.info(f"RAG query: '{req.question[:80]}...'")
         chain = self._get_chain()
         top_k = req.top_k or settings.rag_top_k
-        result = chain.invoke({"question": req.question, "top_k": top_k})
+        result = chain.invoke({
+            "question": req.question,
+            "top_k": top_k,
+            "use_mmr": req.use_mmr,
+        })
 
         response = RAGQueryResponse(
             answer=result["answer"],

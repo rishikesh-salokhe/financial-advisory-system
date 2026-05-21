@@ -2,12 +2,17 @@
 Document ingestion for the RAG pipeline.
 
 Supported sources out of the box:
-  - .txt / .md   → TextLoader
-  - .pdf         → PyPDFLoader  (install ``pypdf`` to enable)
-  - .csv         → CSVLoader
-  - .html        → UnstructuredHTMLLoader (optional, requires ``unstructured``)
+  - .txt / .md       → TextLoader
+  - .pdf             → PyPDFLoader  (requires ``pypdf``)
+  - .csv             → CSVLoader
+  - .html / .htm     → BSHTMLLoader (requires ``beautifulsoup4`` — already
+                       installed via langchain-community)
 
 Add new file types by mapping them in ``LOADER_REGISTRY``.
+
+HTML support is particularly useful for SEC EDGAR filings: 10-K and 10-Q
+filings are published as inline-XBRL ``.htm`` documents. Save the .htm directly
+from EDGAR ("right-click → Save link as") and drop it into ``data/raw/``.
 """
 from __future__ import annotations
 
@@ -15,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from langchain_community.document_loaders import (
+    BSHTMLLoader,
     CSVLoader,
     DirectoryLoader,
     PyPDFLoader,
@@ -46,11 +52,19 @@ def _pdf(path: str):
     return PyPDFLoader(path)
 
 
+def _html(path: str):
+    # BSHTMLLoader uses BeautifulSoup; the "html.parser" backend avoids
+    # needing the optional ``lxml`` system package on Windows.
+    return BSHTMLLoader(path, bs_kwargs={"features": "html.parser"})
+
+
 LOADER_REGISTRY: dict[str, LoaderFactory] = {
     ".txt": _txt,
     ".md": _txt,
     ".pdf": _pdf,
     ".csv": _csv,
+    ".html": _html,
+    ".htm": _html,
 }
 
 
